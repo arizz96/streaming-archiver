@@ -1,0 +1,5 @@
+# Add your EPG script cron entry here.
+# Example: 0 0 * * 5-7 /var/www/html/downloader/epg.sh -d Friday,Saturday,Sunday >> /var/www/html/downloader/epg.log 2>&1
+
+# BEGIN DOWNLOADER AUTOMATIC SECTION
+# END DOWNLOADER AUTOMATIC SECTION
