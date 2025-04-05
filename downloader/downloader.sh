@@ -14,11 +14,12 @@ notify_telegram() {
 }
 
 # url, segment_time, program, time, destination, name
+# The -map -0:s command skips subtitle track.
 download_stream() {
   ffmpeg -i $1 \
     -f segment -segment_time $2 \
     -reset_timestamps 1 \
-    -map p:$3 \
+    -map p:$3 -map -0:s \
     -t $4 \
     -c copy $5/$6_$(date '+%Y%m%d%H%M%S')_%d.mp4
 }
