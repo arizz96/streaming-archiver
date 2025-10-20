@@ -1,7 +1,7 @@
 #!/bin/sh
 
 # Usage:
-# ./downloader.sh -c 0 -t {duration_in_seconds} -s #{segment_time_in_seconds} -p 2 -d {output_folder} -n #{output_prefix}
+# ./downloader.sh -c {channel_id} -t {duration_in_seconds} -s #{segment_time_in_seconds} -p 2 -d {output_folder} -n #{output_prefix}
 
 # operation, name
 notify_telegram() {
@@ -50,9 +50,21 @@ while getopts ":c:d:s:p:t:n:" opt; do
   esac
 done
 
-# Add your stream URL here
-# ...
-url=
+# Get channel config
+get_channel_url() {
+    channel_id="$1"
+    config_file="${CONFIG_FILE:-./channels.yml}"
+    channel_script=$(cat $config_file | yq -r ".channels[] | select(.id == \"$channel_id\") | .download_url_script")
+    if [ -f "./$channel_script" ]; then
+        sh "./$channel_script"
+    else
+        echo "Error: Channel script not found"
+        exit 1
+    fi
+}
+
+# Replace the static url= line with:
+url=$(get_channel_url "$channel_id")
 
 notify_telegram "start" $name
 

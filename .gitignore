@@ -1,1 +1,4 @@
 .htpasswd
+downloader/channels.yml
+downloader/*_download_url.sh
+downloader/*_schedule.sh

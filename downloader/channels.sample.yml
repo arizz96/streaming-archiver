@@ -1,0 +1,9 @@
+channels:
+  - id: channel1
+    name: 'First channel'
+    schedule:
+      - Friday
+      - Saturday
+      - Sunday
+    download_url_script: 'channel1_download_url.sh'
+    schedule_json_script: 'channel1_schedule.sh'

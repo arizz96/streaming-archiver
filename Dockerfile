@@ -15,6 +15,7 @@ RUN apk add --no-cache \
     curl \
     ffmpeg \
     jq \
+    yq \
     busybox-suid
 
 WORKDIR /var/www/html

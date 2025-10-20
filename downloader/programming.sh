@@ -1,7 +1,7 @@
 #!/bin/sh
 
 # Usage:
-# ./programming.sh -p [starttime|endtime|name] -d {delay} -D {duration multiplier in %}
+# ./programming.sh -p [channel_id|starttime|endtime|name] -d {delay} -D {duration multiplier in %}
 
 # Convert input date (UTC, formatted as YYYY.MM.DD-hh:mm:ss) to crontab format with optional extra minutes
 crontab_date() {
@@ -16,7 +16,7 @@ crontab_date() {
 
 # Create downloader command with given duration and name
 downloader_command() {
-  echo "/var/www/html/downloader/downloader.sh -c 0 -t $1 -s 1800 -p 2 -d /var/www/html/videos -n $2"
+  echo "/var/www/html/downloader/downloader.sh -c $1 -t $2 -s 1800 -p 2 -d /var/www/html/videos -n $3"
 }
 
 # Calculate the difference in seconds between two dates
@@ -185,7 +185,7 @@ crontab=""
 
 # Loop through the entries and construct crontab content
 for entry in $programming_array; do
-  IFS='|' read -r starttime endtime name <<EOL
+  IFS='|' read -r channel_id starttime endtime name <<EOL
 $entry
 EOL
 
@@ -195,7 +195,7 @@ EOL
   duration_seconds=$(round_up_to_nearest_halfhour "$duration_seconds") # Round up to nearest half-hour
 
   crontab_entry=$(crontab_date "$starttime" "$delay")
-  crontab_entry="${crontab_entry} $(downloader_command "$duration_seconds" "$name")"
+  crontab_entry="${crontab_entry} $(downloader_command "$channel_id" "$duration_seconds" "$name")"
 
   crontab="${crontab}${crontab_entry}\n"
 done
