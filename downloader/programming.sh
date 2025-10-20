@@ -43,17 +43,23 @@ round_up_to_nearest_halfhour() {
 # Replace crontab entries between markers
 replace_crontab_entries() {
   new_content="$1"
+  channel_id="$2"
+
+  # Create channel specific markers
+  begin_marker="# BEGIN ${channel_id} DOWNLOADER AUTOMATIC SECTION"
+  end_marker="# END ${channel_id} DOWNLOADER AUTOMATIC SECTION"
+
   # Check if the marker lines exist in the crontab
-  if crontab -l | grep -q -e '# BEGIN DOWNLOADER AUTOMATIC SECTION' -e '# END DOWNLOADER AUTOMATIC SECTION'; then
+  if crontab -l | grep -q -e "$begin_marker" -e "$end_marker"; then
     # Extract the crontab content between the markers
-    crontab -l | awk -v new_content="$new_content" '
-      /# BEGIN DOWNLOADER AUTOMATIC SECTION/ {
+    crontab -l | awk -v new_content="$new_content" -v begin="$begin_marker" -v end="$end_marker" '
+      $0 ~ begin {
         print
         printf("%s", new_content)
         in_block = 1
         next
       }
-      /# END DOWNLOADER AUTOMATIC SECTION/ {
+      $0 ~ end {
         in_block = 0
       }
       !in_block
@@ -62,22 +68,29 @@ replace_crontab_entries() {
     crontab /var/www/html/downloader/temp_crontab
     # Clean up
     rm /var/www/html/downloader/temp_crontab
+  else
+    # If markers don't exist, append new section
+    (crontab -l 2>/dev/null; echo "$begin_marker"; echo "$new_content"; echo "$end_marker") | crontab -
   fi
 }
 
 read_crontab_entries() {
-  new_content="$1"
+  channel_id="$1"
+
+  # Create channel specific markers
+  begin_marker="# BEGIN ${channel_id} DOWNLOADER AUTOMATIC SECTION"
+  end_marker="# END ${channel_id} DOWNLOADER AUTOMATIC SECTION"
 
   # Check if the marker lines exist in the crontab
-  if crontab -l | grep -q -e '# BEGIN DOWNLOADER AUTOMATIC SECTION' -e '# END DOWNLOADER AUTOMATIC SECTION'; then
+  if crontab -l | grep -q -e "$begin_marker" -e "$end_marker"; then
     # Extract the crontab content between the markers, excluding the header and footer
-    crontab -l | awk '
-      /# BEGIN DOWNLOADER AUTOMATIC SECTION/ { start=1; next }
-      /# END DOWNLOADER AUTOMATIC SECTION/ { start=0; exit }
+    crontab -l | awk -v begin="$begin_marker" -v end="$end_marker" '
+      $0 ~ begin { start=1; next }
+      $0 ~ end { start=0; exit }
       start { print }
     '
   else
-    echo "Error: The specified section markers are not found in the crontab."
+    echo "Error: The specified section markers for channel ${channel_id} are not found in the crontab."
     return 1
   fi
 }
@@ -149,7 +162,7 @@ notify_telegram() {
 }
 
 # Get input options
-while getopts ":p:d:D:" opt; do
+while getopts ":p:d:D:c:" opt; do
   case $opt in
     p)
       programming="$OPTARG"
@@ -159,6 +172,9 @@ while getopts ":p:d:D:" opt; do
       ;;
     D)
       duration="$OPTARG"
+      ;;
+    c)
+      channel="$OPTARG"
       ;;
     \?)
       echo "Invalid option: -$OPTARG" >&2
@@ -185,7 +201,7 @@ crontab=""
 
 # Loop through the entries and construct crontab content
 for entry in $programming_array; do
-  IFS='|' read -r channel_id starttime endtime name <<EOL
+  IFS='|' read -r starttime endtime name <<EOL
 $entry
 EOL
 
@@ -203,8 +219,8 @@ done
 old_crontab=$(read_crontab_entries)
 
 # Replace crontab entries with the new content
-replace_crontab_entries "$crontab"
-new_crontab=$(read_crontab_entries)
+replace_crontab_entries "$crontab" "$channel"
+new_crontab=$(read_crontab_entries "$channel")
 
 # Notify if a new crontab has been installed
 if [[ "$old_crontab" != "$new_crontab" ]]; then

@@ -23,7 +23,6 @@ fetch_schedule_raw_data() {
 # Process JSON data and extract required information
 process_schedule() {
   json_data="$1"
-  channel_id="$2"
   results=""
 
   # Read and process each line of JSON data
@@ -38,7 +37,7 @@ process_schedule() {
     seasonNumber=$(echo "$line" | jq -r '.seasonNumber')
 
     # Concatenate information
-    entry="${channel_id}|$starttime|$endtime|${contentTitle}_${seasonNumber}_${episodeNumber}"
+    entry="$starttime|$endtime|${contentTitle}_${seasonNumber}_${episodeNumber}"
 
     results="${results}${entry} "
   done << EOF
@@ -83,7 +82,7 @@ for dow in $(echo "$dow_array"); do
   log "Retrieved $schedule_raw_data"
 
   if [ -n "$schedule_raw_data" ]; then
-    processed_results=$(process_schedule "$schedule_raw_data" "$channel")
+    processed_results=$(process_schedule "$schedule_raw_data")
     log "Processed $processed_results"
 
     scheduler_entries="${scheduler_entries}${processed_results} "
@@ -93,4 +92,4 @@ for dow in $(echo "$dow_array"); do
 done
 
 log "Calling programming script with: $scheduler_entries"
-/var/www/html/downloader/programming.sh -p "$scheduler_entries" -d 10 -D 150
+/var/www/html/downloader/programming.sh -p "$scheduler_entries" -d 10 -D 150 -c "$channel"
