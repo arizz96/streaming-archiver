@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 
 # Log a message with a timestamp
 log() {
@@ -32,7 +32,7 @@ process_schedule() {
     endtime=$(echo "$line" | jq -r '.endtime' | sed 's/-/./g' | sed 's/T/-/g' | sed 's/Z//')
 
     contentTitle=$(echo "$line" | jq -r '.contentTitle' | tr '[:upper:]' '[:lower:]' | tr ' ' '_')
-    contentTitle=${contentTitle//[^a-zA-Z0-9\_]/}
+    contentTitle=$(printf '%s' "$contentTitle" | tr -cd 'a-zA-Z0-9_')
 
     episodeNumber=$(echo "$line" | jq -r '.episodeNumber')
     seasonNumber=$(echo "$line" | jq -r '.seasonNumber')
