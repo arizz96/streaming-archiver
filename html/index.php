@@ -16,9 +16,27 @@
         <h1>Crontab configuration:</h1>
         <?php
             function getCrontabSchedule() {
-                $output = `crontab -l | sed -n '/# BEGIN DOWNLOADER AUTOMATIC SECTION/,/# END DOWNLOADER AUTOMATIC SECTION/p'`;
-                $output = explode("\n", $output);
-                return array_slice($output, 1, count($output) - 3); // skip begin, end and final ending lines
+                // Get all sections using grep to match any channel id
+                $output = `crontab -l | grep -A 1000 "# BEGIN.*DOWNLOADER AUTOMATIC SECTION" | grep -B 1000 "# END.*DOWNLOADER AUTOMATIC SECTION"`;
+                $lines = explode("\n", $output);
+                $schedule = array();
+
+                $collecting = false;
+                foreach ($lines as $line) {
+                    if (strpos($line, "# BEGIN") !== false) {
+                        $collecting = true;
+                        continue;
+                    }
+                    if (strpos($line, "# END") !== false) {
+                        $collecting = false;
+                        continue;
+                    }
+                    if ($collecting && trim($line) !== '') {
+                        $schedule[] = $line;
+                    }
+                }
+
+                return $schedule;
             }
 
             function getNextOccurrence($cronExpression) {
