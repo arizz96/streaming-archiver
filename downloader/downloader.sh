@@ -53,17 +53,15 @@ done
 # Get channel config
 get_channel_url() {
     channel_id="$1"
-    config_file="${CONFIG_FILE:-./channels.yml}"
-    channel_script=$(cat $config_file | yq -r ".channels[] | select(.id == \"$channel_id\") | .download_url_script")
-    if [ -f "./$channel_script" ]; then
-        sh "./$channel_script"
+    channel_script=$(cat "/var/www/html/downloader/channels.yml" | yq -r ".channels[] | select(.id == \"$channel_id\") | .download_url_script")
+    if [ -f "/var/www/html/downloader/$channel_script" ]; then
+        sh "/var/www/html/downloader/$channel_script"
     else
         echo "Error: Channel script not found"
         exit 1
     fi
 }
 
-# Replace the static url= line with:
 url=$(get_channel_url "$channel_id")
 
 notify_telegram "start" $name

@@ -9,8 +9,7 @@ log() {
 fetch_schedule_raw_data() {
     day="$1"
     channel_id="$2"
-    config_file="${CONFIG_FILE:-./channels.yml}"
-    schedule_script=$(cat $config_file | yq -r ".channels[] | select(.id == \"$channel_id\") | .schedule_json_script")
+    schedule_script=$(cat "/var/www/html/downloader/channels.yml" | yq -r ".channels[] | select(.id == \"$channel_id\") | .schedule_json_script")
 
     if [ -f "./$schedule_script" ]; then
         sh "./$schedule_script" "$day"
