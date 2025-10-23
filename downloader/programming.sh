@@ -11,7 +11,7 @@ crontab_date() {
     input_date=$(date -u -d "@$(( $(date -d $input_date +%s) - $extra_minutes * 60 ))" +"%Y.%m.%d-%H:%M:%S")
   fi
 
-  date -d "$input_date" '+%M %H %d %m \*'
+  date -d "$input_date" '+%M %H %d %m *'
 }
 
 # Create downloader command with given duration and name
@@ -52,25 +52,23 @@ replace_crontab_entries() {
   # Check if the marker lines exist in the crontab
   if crontab -l | grep -q -e "$begin_marker" -e "$end_marker"; then
     # Extract the crontab content between the markers
-    crontab -l | awk -v new_content="$new_content" -v begin="$begin_marker" -v end="$end_marker" '
+    crontab -l | awk -v content="$new_content" -v begin="$begin_marker" -v end="$end_marker" '
       $0 ~ begin {
         print
-        printf("%s", new_content)
+        printf "%s\n", content
         in_block = 1
         next
       }
       $0 ~ end {
+        print
         in_block = 0
+        next
       }
-      !in_block
-    ' > /var/www/html/downloader/temp_crontab
-    # Install the modified crontab
-    crontab /var/www/html/downloader/temp_crontab
-    # Clean up
-    rm /var/www/html/downloader/temp_crontab
+      !in_block { print }
+    ' | crontab -
   else
     # If markers don't exist, append new section
-    (crontab -l 2>/dev/null; echo "$begin_marker"; echo "$new_content"; echo "$end_marker") | crontab -
+    (crontab -l 2>/dev/null; echo "$begin_marker"; echo -e "$new_content"; echo; echo "$end_marker") | crontab -
   fi
 }
 
@@ -213,7 +211,11 @@ EOL
   crontab_entry=$(crontab_date "$starttime" "$delay")
   crontab_entry="${crontab_entry} $(downloader_command "$channel_id" "$duration_seconds" "$name")"
 
-  crontab="${crontab}${crontab_entry}\n"
+  if [ -z "$crontab" ]; then
+    crontab="$crontab_entry"
+  else
+    crontab=$(echo -e "$crontab\n$crontab_entry")
+  fi
 done
 
 old_crontab=$(read_crontab_entries)
