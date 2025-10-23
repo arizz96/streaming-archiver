@@ -11,8 +11,8 @@ fetch_schedule_raw_data() {
     channel_id="$2"
     schedule_script=$(cat "/var/www/html/downloader/channels.yml" | yq -r ".channels[] | select(.id == \"$channel_id\") | .schedule_json_script")
 
-    if [ -f "./$schedule_script" ]; then
-        sh "./$schedule_script" "$day"
+    if [ -f "/var/www/html/downloader/$schedule_script" ]; then
+        sh "/var/www/html/downloader/$schedule_script" "$day"
     else
         echo "Error: Schedule script not found"
         return 1
