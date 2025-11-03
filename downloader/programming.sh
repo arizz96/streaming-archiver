@@ -209,7 +209,7 @@ EOL
   duration_seconds=$(round_up_to_nearest_halfhour "$duration_seconds") # Round up to nearest half-hour
 
   crontab_entry=$(crontab_date "$starttime" "$delay")
-  crontab_entry="${crontab_entry} $(downloader_command "$channel_id" "$duration_seconds" "$name")"
+  crontab_entry="${crontab_entry} $(downloader_command "$channel" "$duration_seconds" "$name")"
 
   if [ -z "$crontab" ]; then
     crontab="$crontab_entry"
