@@ -1,0 +1,157 @@
+# Streaming archiver as a Home Assistant package.
+# Needs HA 2024.10+ (new template/automation syntax) and a Local Calendar
+# entity named "Stream recordings" (calendar.stream_recordings), created in
+# Settings > Devices & services > Add integration > Local Calendar.
+#
+# Flow:  epg_refresh -> pick in input_select.epg_program -> schedule_selected_program
+#        -> calendar event -> "Record scheduled program" automation -> record_stream.sh
+
+input_select:
+  epg_program:
+    name: EPG program
+    options:
+      - "(refresh EPG)"
+
+input_text:
+  # Manual stream URL. When set it wins over the channel's download_url script.
+  stream_url_override:
+    name: Stream URL override
+    max: 255
+
+shell_command:
+  # Backgrounds ffmpeg itself, so this returns immediately (shell_command is killed after 60s).
+  record_stream: >-
+    /config/scripts/record_stream.sh
+    "{{ url }}" "{{ secs }}" "{{ name }}" "{{ channel }}"
+  stop_recordings: pkill -f "ffmpeg.*/media/recordings" || true
+
+rest_command:
+  # EDIT: put your real EPG endpoint here. {{ day }} is YYYY-MM-DD, {{ channel }} the channel id.
+  fetch_epg:
+    url: "https://example.org/epg?channel={{ channel }}&day={{ day }}"
+    method: get
+    timeout: 30
+
+template:
+  # Holds the parsed program list so the dropdown index can be mapped back to start/end/title.
+  - triggers:
+      - trigger: event
+        event_type: epg_loaded
+    sensor:
+      - name: EPG programs
+        unique_id: epg_programs
+        state: "{{ trigger.event.data.programs | count }}"
+        attributes:
+          programs: "{{ trigger.event.data.programs }}"
+
+# The program list attribute is large; keep it out of the database.
+recorder:
+  exclude:
+    entities:
+      - sensor.epg_programs
+
+script:
+  epg_refresh:
+    alias: EPG refresh
+    mode: single
+    fields:
+      channel:
+        description: Channel id as used by the EPG endpoint
+        default: channel1
+    sequence:
+      - action: rest_command.fetch_epg
+        data:
+          channel: "{{ channel }}"
+          day: "{{ now().strftime('%Y-%m-%d') }}"
+        response_variable: today
+      - action: rest_command.fetch_epg
+        data:
+          channel: "{{ channel }}"
+          day: "{{ (now() + timedelta(days=1)).strftime('%Y-%m-%d') }}"
+        response_variable: tomorrow
+      - variables:
+          events: >-
+            {{ (today.content.events | default([])) + (tomorrow.content.events | default([])) }}
+          programs: >-
+            {% set ns = namespace(items=[]) %}
+            {% for e in events %}
+              {% set start = as_datetime(e.starttime) %}
+              {% if start > utcnow() %}
+                {% set c = e.content | default({}) %}
+                {% set title = c.contentTitle | default(e.eventTitle, true) %}
+                {# movies have no season/episode #}
+                {% set se = (' S%02dE%02d' | format(c.seasonNumber, c.episodeNumber)) if (c.seasonNumber is defined and c.episodeNumber is defined) else '' %}
+                {% set ns.items = ns.items + [{
+                  'label': as_local(start).strftime('%a %d/%m %H:%M') ~ ' · ' ~ title ~ se,
+                  'name': title ~ se,
+                  'channel': channel,
+                  'start': e.starttime,
+                  'end': e.endtime
+                }] %}
+              {% endif %}
+            {% endfor %}
+            {{ ns.items }}
+      - action: input_select.set_options
+        target:
+          entity_id: input_select.epg_program
+        data:
+          options: "{{ programs | map(attribute='label') | list or ['(no programs found)'] }}"
+      - event: epg_loaded
+        event_data:
+          programs: "{{ programs }}"
+
+  schedule_selected_program:
+    alias: Schedule selected program
+    mode: queued
+    sequence:
+      - variables:
+          opts: "{{ state_attr('input_select.epg_program', 'options') }}"
+          idx: "{{ opts.index(states('input_select.epg_program')) }}"
+          p: "{{ state_attr('sensor.epg_programs', 'programs')[idx] }}"
+      - action: calendar.create_event
+        target:
+          entity_id: calendar.stream_recordings
+        data:
+          summary: "{{ p.name }}"
+          description: "{{ p.channel }}"
+          start_date_time: "{{ as_local(as_datetime(p.start)).strftime('%Y-%m-%d %H:%M:%S') }}"
+          end_date_time: "{{ as_local(as_datetime(p.end)).strftime('%Y-%m-%d %H:%M:%S') }}"
+      - action: notify.notify
+        data:
+          message: "Scheduled recording: {{ p.label }}"
+
+automation:
+  - alias: EPG refresh daily
+    triggers:
+      - trigger: time
+        at: "03:00:00"
+      - trigger: homeassistant
+        event: start
+    actions:
+      - action: script.epg_refresh
+
+  - alias: Record scheduled program
+    mode: parallel
+    triggers:
+      # Start 10 minutes early, like `-d 10` in programming.sh.
+      - trigger: calendar
+        event: start
+        entity_id: calendar.stream_recordings
+        offset: "-0:10:0"
+    actions:
+      - variables:
+          ev: "{{ trigger.calendar_event }}"
+          lead: 600
+          multiplier: 1.5   # `-D 150` in epg.sh
+          dur: "{{ (as_datetime(ev.end) - as_datetime(ev.start)).total_seconds() }}"
+          # (duration + lead) * multiplier, rounded up to the next half hour
+          secs: "{{ (((dur + lead) * multiplier / 1800) | round(0, 'ceil') | int) * 1800 }}"
+      - action: shell_command.record_stream
+        data:
+          url: "{{ states('input_text.stream_url_override') | trim }}"
+          secs: "{{ secs }}"
+          name: "{{ slugify(ev.summary) }}"
+          channel: "{{ ev.description | default('channel1', true) }}"
+      - action: notify.notify
+        data:
+          message: "Recording started: {{ ev.summary }} ({{ (secs / 60) | int }} min max)"
