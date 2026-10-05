@@ -1,41 +1,38 @@
 # Home Assistant version
 
-Replaces `epg.sh` / `programming.sh` / cron with HA automations. `downloader.sh`'s ffmpeg call lives on in `scripts/record_stream.sh`.
+Replaces `epg.sh` / `programming.sh` / cron. Per channel you used to have an EPG script and a download-URL script; now:
+
+| Old | New |
+|---|---|
+| `channelX_schedule.sh` + cron + `programming.sh` | an automation calling `script.sync_schedule` with the channel's URL and **rules**; results land in a **Local Calendar** (the schedule entity) |
+| `channelX_download_url.sh` | `script.stream_url_<channel>`, returns `{url: ...}` |
+| cron entry running `downloader.sh` | calendar **start** automation -> `script.record_start`; calendar **end** automation -> `script.record_stop` |
+
+## Layout
+- `packages/archiver_core.yaml` - shared: `sync_schedule`, `record_start`, `record_stop`, `rest_command.fetch_json`, `shell_command`s, `input_text.stream_url_override`.
+- `packages/channel_<id>.yaml` - one per channel (copy `channel_tv8.yaml`): URL script, sync automation with rules, start/stop automations.
+- `scripts/record_stream.sh` - ffmpeg start/stop (pid file per recording).
 
 ## Install
-1. Enable packages in `configuration.yaml`:
-   ```yaml
-   homeassistant:
-     packages: !include_dir_named packages
-   ```
-2. Copy `packages/streaming_archiver.yaml` to `/config/packages/`, `scripts/record_stream.sh` to `/config/scripts/` (`chmod +x`).
-3. Copy your `channelX_download_url.sh` scripts to `/config/downloader/` (only needed when no manual URL is set).
-4. Add the **Local Calendar** integration named "Stream recordings" (`calendar.stream_recordings`).
-5. Edit `rest_command.fetch_epg.url` to your real EPG endpoint, then restart HA.
-6. ffmpeg must exist where HA runs (HA OS/Container ship it). Recordings go to `/media/recordings`.
+1. `configuration.yaml`: `homeassistant: {packages: !include_dir_named packages}`.
+2. Copy `packages/*` to `/config/packages/`, `scripts/record_stream.sh` to `/config/scripts/` (`chmod +x`).
+3. Add a **Local Calendar** per channel (e.g. "TV8 schedule" -> `calendar.tv8_schedule`).
+4. In `channel_<id>.yaml` set the EPG URL (`{day}` becomes `YYYY-MM-DD`), the rules and your stream-URL logic. Restart HA.
 
-## Use
-- `script.epg_refresh` runs at 03:00 and on start. It fetches today and tomorrow and fills `input_select.epg_program`.
-- Pick a program, then run `script.schedule_selected_program`. It adds a calendar event.
-- 10 minutes before the event, ffmpeg starts. The length is `(duration + 10 min) * 1.5`, rounded up to 30 minutes (the old `-d 10 -D 150`).
-- Manual stream: put the URL in `input_text.stream_url_override`. Leave it empty to use the channel script.
+## Rules (in the sync automation's `data`)
+- `include_titles`: keep programs whose title contains any entry (case-insensitive).
+- `genres`: keep programs whose genre or subgenre equals any entry (e.g. `Film`, `Documentario`).
+- `exclude_titles`: drop programs matching any entry.
+- Both include lists empty = keep everything. A program is kept if it matches title **or** genre, unless excluded.
 
-Dashboard card:
-```yaml
-type: entities
-entities:
-  - input_select.epg_program
-  - input_text.stream_url_override
-  - type: button
-    name: Schedule recording
-    tap_action: {action: perform-action, perform_action: script.schedule_selected_program}
-  - type: button
-    name: Refresh EPG
-    tap_action: {action: perform-action, perform_action: script.epg_refresh}
-```
+## Recording
+- Starts at event start minus the trigger offset (2 min), stops at event end plus offset (5 min); set both to `0:0:0` for exact times.
+- Stopped with SIGINT so the last segment is finalised. `RECORD_MAX_SECS` (6 h) is a safety cap.
+- Files go to `/media/recordings/<channel>_<title>_<timestamp>_<n>.mp4`, segmented every 30 min.
+- Manual stream: set `input_text.stream_url_override` (the sample URL script honours it).
 
-## Notes
-- Untested against a live HA instance. Check template output in Developer tools > Template first.
-- Only one channel is fetched (the `channel` field of `script.epg_refresh`).
-- The Telegram messages become `notify.notify`. Change it to your notifier.
-- `shell_command.stop_recordings` kills running ffmpeg recordings.
+## Caveats
+- Untested in a live HA; check `sync_schedule` output in Developer tools first. The rule/parsing template was tested locally against your JSON shape.
+- Sync adds new programs only. Events already in the calendar are not removed when rules change; delete them in the calendar UI.
+- A recording is lost if HA restarts mid-program (ffmpeg dies with its parent).
+- Telegram messages are now `notify.notify`.

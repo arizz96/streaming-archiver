@@ -1,0 +1,58 @@
+# One file per channel. Copy, then change: id (tv8), calendar entity, EPG URL, rules, stream URL logic.
+# Requires a Local Calendar whose entity id is calendar.tv8_schedule.
+
+script:
+  # Return the playable URL. Put authentication / token logic here
+  # (rest_command or shell_command with response_variable) instead of the sample.
+  stream_url_tv8:
+    alias: Stream URL TV8
+    sequence:
+      - variables:
+          manual: "{{ states('input_text.stream_url_override') | trim }}"
+          result:
+            url: "{{ manual if manual != '' else 'https://www.example.org/video.m3u8' }}"
+      - stop: done
+        response_variable: result
+
+automation:
+  - alias: "TV8: sync schedule"
+    triggers:
+      - trigger: time
+        at: "03:00:00"
+      - trigger: homeassistant
+        event: start
+    actions:
+      - action: script.sync_schedule
+        data:
+          channel: tv8
+          calendar: calendar.tv8_schedule
+          url_template: "https://example.org/epg?channel=8195&day={day}"
+          days: 2
+          # Rules: leave include_titles and genres empty to keep everything.
+          include_titles: ["profondo nero", "quarto grado"]
+          genres: []
+          exclude_titles: ["replica"]
+
+  - alias: "TV8: record start"
+    mode: parallel
+    triggers:
+      - trigger: calendar
+        event: start
+        entity_id: calendar.tv8_schedule
+        offset: "-0:02:0"     # start a little early
+    actions:
+      - action: script.record_start
+        data:
+          ev: "{{ trigger.calendar_event }}"
+
+  - alias: "TV8: record stop"
+    mode: parallel
+    triggers:
+      - trigger: calendar
+        event: end
+        entity_id: calendar.tv8_schedule
+        offset: "0:05:0"      # keep going a little after the guide's end time
+    actions:
+      - action: script.record_stop
+        data:
+          ev: "{{ trigger.calendar_event }}"

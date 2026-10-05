@@ -1,0 +1,140 @@
+# Shared building blocks. Per-channel config lives in packages/channel_<id>.yaml.
+#
+# Per channel you need:
+#   - a Local Calendar (Settings > Devices & services > Local Calendar) = the schedule entity
+#   - script.stream_url_<id>   returns {url: ...}
+#   - an automation that calls script.sync_schedule with that channel's rules
+#   - two tiny automations (calendar start/end) that call record_start / record_stop
+
+input_text:
+  # Manual stream URL. stream_url_* scripts may honour it (the sample does).
+  stream_url_override:
+    name: Stream URL override
+    max: 255
+
+rest_command:
+  fetch_json:
+    url: "{{ url }}"
+    method: get
+    timeout: 30
+
+shell_command:
+  # Both return immediately; ffmpeg is detached by the script.
+  record_start: "/config/scripts/record_stream.sh start '{{ key }}' '{{ url }}' '{{ name }}'"
+  record_stop: "/config/scripts/record_stream.sh stop '{{ key }}'"
+
+script:
+  # Fetch the EPG for the next N days, keep the programs matching the rules,
+  # and add the ones not already present to the channel's calendar.
+  sync_schedule:
+    alias: Sync schedule
+    mode: parallel
+    max: 5
+    fields:
+      channel: {description: "Channel id, also used for script.stream_url_<channel>"}
+      calendar: {description: "calendar.* entity that holds this channel's schedule"}
+      url_template: {description: "EPG URL; {day} is replaced by YYYY-MM-DD"}
+      days: {description: "How many days ahead to fetch", default: 2}
+      include_titles: {description: "Keep programs whose title contains any of these (case-insensitive)"}
+      genres: {description: "Keep programs whose genre/subgenre equals any of these"}
+      exclude_titles: {description: "Drop programs whose title contains any of these"}
+    sequence:
+      - repeat:
+          for_each: "{{ range(0, days | default(2) | int) | list }}"
+          sequence:
+            - action: rest_command.fetch_json
+              data:
+                url: >-
+                  {{ url_template | replace('{day}', (now() + timedelta(days=repeat.item)).strftime('%Y-%m-%d')) }}
+              response_variable: resp
+            - variables:
+                matches: >-
+                  {% set inc = include_titles | default([]) | map('lower') | list %}
+                  {% set exc = exclude_titles | default([]) | map('lower') | list %}
+                  {% set gen = genres | default([]) | map('lower') | list %}
+                  {% set ns = namespace(items=[]) %}
+                  {% for e in resp.content.events | default([]) %}
+                    {% set c = e.content | default({}) %}
+                    {% set title = c.contentTitle | default(e.eventTitle, true) %}
+                    {% set t = title | lower %}
+                    {% set g = [((c.genre | default({})).name | default('')) | lower,
+                                ((c.subgenre | default({})).name | default('')) | lower] %}
+                    {% set wanted = (inc | length == 0 and gen | length == 0)
+                                    or (inc | select('in', t) | list | count > 0)
+                                    or (gen | select('in', g) | list | count > 0) %}
+                    {% set dropped = exc | select('in', t) | list | count > 0 %}
+                    {# movies have no season/episode #}
+                    {% set se = (' S%02dE%02d' | format(c.seasonNumber, c.episodeNumber)) if (c.seasonNumber is defined and c.episodeNumber is defined) else '' %}
+                    {% if wanted and not dropped and as_datetime(e.starttime) > utcnow() %}
+                      {% set ns.items = ns.items + [{
+                        'name': title ~ se,
+                        'start': as_local(as_datetime(e.starttime)).strftime('%Y-%m-%d %H:%M:%S'),
+                        'end': as_local(as_datetime(e.endtime)).strftime('%Y-%m-%d %H:%M:%S')
+                      }] %}
+                    {% endif %}
+                  {% endfor %}
+                  {{ ns.items }}
+            - repeat:
+                for_each: "{{ matches }}"
+                sequence:
+                  - action: calendar.get_events
+                    target:
+                      entity_id: "{{ calendar }}"
+                    data:
+                      start_date_time: "{{ repeat.item.start }}"
+                      duration: "00:01:00"
+                    response_variable: existing
+                  - if: >-
+                      {{ existing[calendar].events | selectattr('summary', 'eq', repeat.item.name) | list | count == 0 }}
+                    then:
+                      - action: calendar.create_event
+                        target:
+                          entity_id: "{{ calendar }}"
+                        data:
+                          summary: "{{ repeat.item.name }}"
+                          description: "{{ channel }}"
+                          start_date_time: "{{ repeat.item.start }}"
+                          end_date_time: "{{ repeat.item.end }}"
+
+  # ev = trigger.calendar_event from the channel's calendar-start automation.
+  record_start:
+    alias: Record start
+    mode: parallel
+    max: 10
+    fields:
+      ev: {description: "trigger.calendar_event"}
+    sequence:
+      - variables:
+          channel: "{{ ev.description }}"
+          key: "{{ channel }}_{{ as_timestamp(ev.start) | int }}"
+      - action: "script.stream_url_{{ channel }}"
+        response_variable: res
+      - if: "{{ (res.url | default('')) == '' }}"
+        then:
+          - action: notify.notify
+            data:
+              message: "No stream URL for {{ channel }}: {{ ev.summary }} not recorded"
+          - stop: "no stream url"
+            error: true
+      - action: shell_command.record_start
+        data:
+          key: "{{ key }}"
+          url: "{{ res.url }}"
+          name: "{{ channel }}_{{ slugify(ev.summary) }}"
+      - action: notify.notify
+        data:
+          message: "Recording started: {{ ev.summary }} ({{ channel }})"
+
+  record_stop:
+    alias: Record stop
+    mode: parallel
+    max: 10
+    fields:
+      ev: {description: "trigger.calendar_event"}
+    sequence:
+      - action: shell_command.record_stop
+        data:
+          key: "{{ ev.description }}_{{ as_timestamp(ev.start) | int }}"
+      - action: notify.notify
+        data:
+          message: "Recording ended: {{ ev.summary }} ({{ ev.description }})"
